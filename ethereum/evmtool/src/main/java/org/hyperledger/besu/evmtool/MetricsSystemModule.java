@@ -11,18 +11,22 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
  */
-package org.hyperledger.besu.ethereum.mainnet;
 
-import org.hyperledger.besu.ethereum.core.Gas;
+package org.hyperledger.besu.evmtool;
 
-public class BerlinGasCalculator extends IstanbulGasCalculator {
+import org.hyperledger.besu.plugin.services.MetricsSystem;
 
-  private static final Gas BEGIN_SUB_GAS_COST = Gas.of(1);
+import dagger.Module;
+import dagger.Provides;
 
-  @Override
-  // as https://eips.ethereum.org/EIPS/eip-2315
-  public Gas getBeginSubGasCost() {
-    return BEGIN_SUB_GAS_COST;
+@SuppressWarnings("WeakerAccess")
+@Module
+public class MetricsSystemModule {
+
+  @Provides
+  MetricsSystem getMetricsSystem() {
+    throw new RuntimeException("Abstract");
   }
 }

@@ -1,33 +1,26 @@
 /*
  * Copyright ConsenSys AG.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 package org.hyperledger.besu.plugin.services.storage.rocksdb.segmented;
 
 import static java.util.Objects.requireNonNullElse;
+import static java.util.stream.Collectors.toUnmodifiableSet;
 
-import org.hyperledger.besu.plugin.services.MetricsSystem;
-import org.hyperledger.besu.plugin.services.exception.StorageException;
-import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
-import org.hyperledger.besu.plugin.services.storage.SegmentIdentifier;
-import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetrics;
-import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetricsFactory;
-import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDbUtil;
-import org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBConfiguration;
-import org.hyperledger.besu.services.kvstore.SegmentedKeyValueStorage;
-import org.hyperledger.besu.services.kvstore.SegmentedKeyValueStorageTransactionTransitionValidatorDecorator;
-
-import java.io.Closeable;
+import com.google.common.collect.ImmutableMap;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,12 +30,21 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Sets;
+import java.util.stream.Stream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
+import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.exception.StorageException;
+import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
+import org.hyperledger.besu.plugin.services.storage.SegmentIdentifier;
+import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetrics;
+import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetricsFactory;
+import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDbKeyIterator;
+import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDbUtil;
+import org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBConfiguration;
+import org.hyperledger.besu.services.kvstore.SegmentedKeyValueStorage;
+import org.hyperledger.besu.services.kvstore.SegmentedKeyValueStorageTransactionTransitionValidatorDecorator;
 import org.rocksdb.BlockBasedTableConfig;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
@@ -53,16 +55,15 @@ import org.rocksdb.LRUCache;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.rocksdb.Statistics;
+import org.rocksdb.Status;
 import org.rocksdb.TransactionDB;
 import org.rocksdb.TransactionDBOptions;
 import org.rocksdb.WriteOptions;
 
 public class RocksDBColumnarKeyValueStorage
-    implements SegmentedKeyValueStorage<ColumnFamilyHandle>, Closeable {
+    implements SegmentedKeyValueStorage<ColumnFamilyHandle> {
 
-  static {
-    RocksDbUtil.loadNativeLibrary();
-  }
+  static { RocksDbUtil.loadNativeLibrary(); }
 
   private static final Logger LOG = LogManager.getLogger();
   private static final String DEFAULT_COLUMN = "default";
@@ -73,11 +74,12 @@ public class RocksDBColumnarKeyValueStorage
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final Map<String, ColumnFamilyHandle> columnHandlesByName;
   private final RocksDBMetrics metrics;
+  private final WriteOptions tryDeleteOptions =
+      new WriteOptions().setNoSlowdown(true);
 
   public RocksDBColumnarKeyValueStorage(
       final RocksDBConfiguration configuration,
-      final List<SegmentIdentifier> segments,
-      final MetricsSystem metricsSystem,
+      final List<SegmentIdentifier> segments, final MetricsSystem metricsSystem,
       final RocksDBMetricsFactory rocksDBMetricsFactory)
       throws StorageException {
 
@@ -86,70 +88,69 @@ public class RocksDBColumnarKeyValueStorage
           segments.stream()
               .map(segment -> new ColumnFamilyDescriptor(segment.getId()))
               .collect(Collectors.toList());
-      columnDescriptors.add(
-          new ColumnFamilyDescriptor(
-              DEFAULT_COLUMN.getBytes(StandardCharsets.UTF_8),
-              new ColumnFamilyOptions()
-                  .setTableFormatConfig(createBlockBasedTableConfig(configuration))));
+      columnDescriptors.add(new ColumnFamilyDescriptor(
+          DEFAULT_COLUMN.getBytes(StandardCharsets.UTF_8),
+          new ColumnFamilyOptions().setTableFormatConfig(
+              createBlockBasedTableConfig(configuration))));
 
       final Statistics stats = new Statistics();
-      options =
-          new DBOptions()
-              .setCreateIfMissing(true)
-              .setMaxOpenFiles(configuration.getMaxOpenFiles())
-              .setMaxBackgroundCompactions(configuration.getMaxBackgroundCompactions())
-              .setStatistics(stats)
-              .setCreateMissingColumnFamilies(true)
-              .setEnv(
-                  Env.getDefault().setBackgroundThreads(configuration.getBackgroundThreadCount()));
+      options = new DBOptions()
+                    .setCreateIfMissing(true)
+                    .setMaxOpenFiles(configuration.getMaxOpenFiles())
+                    .setMaxBackgroundCompactions(
+                        configuration.getMaxBackgroundCompactions())
+                    .setStatistics(stats)
+                    .setCreateMissingColumnFamilies(true)
+                    .setEnv(Env.getDefault().setBackgroundThreads(
+                        configuration.getBackgroundThreadCount()));
 
       txOptions = new TransactionDBOptions();
-      final List<ColumnFamilyHandle> columnHandles = new ArrayList<>(columnDescriptors.size());
-      db =
-          TransactionDB.open(
-              options,
-              txOptions,
-              configuration.getDatabaseDir().toString(),
-              columnDescriptors,
-              columnHandles);
-      metrics = rocksDBMetricsFactory.create(metricsSystem, configuration, db, stats);
-      final Map<Bytes, String> segmentsById =
-          segments.stream()
-              .collect(
-                  Collectors.toMap(
-                      segment -> Bytes.wrap(segment.getId()), SegmentIdentifier::getName));
+      final List<ColumnFamilyHandle> columnHandles =
+          new ArrayList<>(columnDescriptors.size());
+      db = TransactionDB.open(options, txOptions,
+                              configuration.getDatabaseDir().toString(),
+                              columnDescriptors, columnHandles);
+      metrics =
+          rocksDBMetricsFactory.create(metricsSystem, configuration, db, stats);
+      final Map<Bytes, String> segmentsById = segments.stream().collect(
+          Collectors.toMap(segment
+                           -> Bytes.wrap(segment.getId()),
+                           SegmentIdentifier::getName));
 
-      final ImmutableMap.Builder<String, ColumnFamilyHandle> builder = ImmutableMap.builder();
+      final ImmutableMap.Builder<String, ColumnFamilyHandle> builder =
+          ImmutableMap.builder();
 
       for (ColumnFamilyHandle columnHandle : columnHandles) {
-        final String segmentName =
-            requireNonNullElse(
-                segmentsById.get(Bytes.wrap(columnHandle.getName())), DEFAULT_COLUMN);
+        final String segmentName = requireNonNullElse(
+            segmentsById.get(Bytes.wrap(columnHandle.getName())),
+            DEFAULT_COLUMN);
         builder.put(segmentName, columnHandle);
       }
       columnHandlesByName = builder.build();
-
     } catch (final RocksDBException e) {
       throw new StorageException(e);
     }
   }
 
-  private BlockBasedTableConfig createBlockBasedTableConfig(final RocksDBConfiguration config) {
+  private BlockBasedTableConfig
+  createBlockBasedTableConfig(final RocksDBConfiguration config) {
     final LRUCache cache = new LRUCache(config.getCacheCapacity());
     return new BlockBasedTableConfig().setBlockCache(cache);
   }
 
   @Override
-  public ColumnFamilyHandle getSegmentIdentifierByName(final SegmentIdentifier segment) {
+  public ColumnFamilyHandle
+  getSegmentIdentifierByName(final SegmentIdentifier segment) {
     return columnHandlesByName.get(segment.getName());
   }
 
   @Override
-  public Optional<byte[]> get(final ColumnFamilyHandle segment, final byte[] key)
-      throws StorageException {
+  public Optional<byte[]> get(final ColumnFamilyHandle segment,
+                              final byte[] key) throws StorageException {
     throwIfClosed();
 
-    try (final OperationTimer.TimingContext ignored = metrics.getReadLatency().startTimer()) {
+    try (final OperationTimer.TimingContext ignored =
+             metrics.getReadLatency().startTimer()) {
       return Optional.ofNullable(db.get(segment, key));
     } catch (final RocksDBException e) {
       throw new StorageException(e);
@@ -157,7 +158,8 @@ public class RocksDBColumnarKeyValueStorage
   }
 
   @Override
-  public Transaction<ColumnFamilyHandle> startTransaction() throws StorageException {
+  public Transaction<ColumnFamilyHandle> startTransaction()
+      throws StorageException {
     throwIfClosed();
     final WriteOptions options = new WriteOptions();
     return new SegmentedKeyValueStorageTransactionTransitionValidatorDecorator<>(
@@ -165,36 +167,33 @@ public class RocksDBColumnarKeyValueStorage
   }
 
   @Override
-  public long removeAllKeysUnless(
-      final ColumnFamilyHandle segmentHandle, final Predicate<byte[]> inUseCheck) {
-    long removedNodeCounter = 0;
-    try (final RocksIterator rocksIterator = db.newIterator(segmentHandle)) {
-      for (rocksIterator.seekToFirst(); rocksIterator.isValid(); rocksIterator.next()) {
-        final byte[] key = rocksIterator.key();
-        if (!inUseCheck.test(key)) {
-          removedNodeCounter++;
-          db.delete(segmentHandle, key);
-        }
-      }
-    } catch (final RocksDBException e) {
-      throw new StorageException(e);
-    }
-    return removedNodeCounter;
+  public Stream<byte[]> streamKeys(final ColumnFamilyHandle segmentHandle) {
+    final RocksIterator rocksIterator = db.newIterator(segmentHandle);
+    rocksIterator.seekToFirst();
+    return RocksDbKeyIterator.create(rocksIterator).toStream();
   }
 
   @Override
-  public Set<byte[]> getAllKeysThat(
-      final ColumnFamilyHandle segmentHandle, final Predicate<byte[]> returnCondition) {
-    final Set<byte[]> returnedKeys = Sets.newIdentityHashSet();
-    try (final RocksIterator rocksIterator = db.newIterator(segmentHandle)) {
-      for (rocksIterator.seekToFirst(); rocksIterator.isValid(); rocksIterator.next()) {
-        final byte[] key = rocksIterator.key();
-        if (returnCondition.test(key)) {
-          returnedKeys.add(key);
-        }
+  public boolean tryDelete(final ColumnFamilyHandle segmentHandle,
+                           final byte[] key) {
+    try {
+      db.delete(segmentHandle, tryDeleteOptions, key);
+      return true;
+    } catch (RocksDBException e) {
+      if (e.getStatus().getCode() == Status.Code.Incomplete) {
+        return false;
+      } else {
+        throw new StorageException(e);
       }
     }
-    return returnedKeys;
+  }
+
+  @Override
+  public Set<byte[]> getAllKeysThat(final ColumnFamilyHandle segmentHandle,
+                                    final Predicate<byte[]> returnCondition) {
+    return streamKeys(segmentHandle)
+        .filter(returnCondition)
+        .collect(toUnmodifiableSet());
   }
 
   @Override
@@ -220,6 +219,7 @@ public class RocksDBColumnarKeyValueStorage
     if (closed.compareAndSet(false, true)) {
       txOptions.close();
       options.close();
+      tryDeleteOptions.close();
       columnHandlesByName.values().forEach(ColumnFamilyHandle::close);
       db.close();
     }
@@ -237,14 +237,17 @@ public class RocksDBColumnarKeyValueStorage
     private final org.rocksdb.Transaction innerTx;
     private final WriteOptions options;
 
-    RocksDbTransaction(final org.rocksdb.Transaction innerTx, final WriteOptions options) {
+    RocksDbTransaction(final org.rocksdb.Transaction innerTx,
+                       final WriteOptions options) {
       this.innerTx = innerTx;
       this.options = options;
     }
 
     @Override
-    public void put(final ColumnFamilyHandle segment, final byte[] key, final byte[] value) {
-      try (final OperationTimer.TimingContext ignored = metrics.getWriteLatency().startTimer()) {
+    public void put(final ColumnFamilyHandle segment, final byte[] key,
+                    final byte[] value) {
+      try (final OperationTimer.TimingContext ignored =
+               metrics.getWriteLatency().startTimer()) {
         innerTx.put(segment, key, value);
       } catch (final RocksDBException e) {
         throw new StorageException(e);
@@ -253,7 +256,8 @@ public class RocksDBColumnarKeyValueStorage
 
     @Override
     public void remove(final ColumnFamilyHandle segment, final byte[] key) {
-      try (final OperationTimer.TimingContext ignored = metrics.getRemoveLatency().startTimer()) {
+      try (final OperationTimer.TimingContext ignored =
+               metrics.getRemoveLatency().startTimer()) {
         innerTx.delete(segment, key);
       } catch (final RocksDBException e) {
         throw new StorageException(e);
@@ -262,7 +266,8 @@ public class RocksDBColumnarKeyValueStorage
 
     @Override
     public void commit() throws StorageException {
-      try (final OperationTimer.TimingContext ignored = metrics.getCommitLatency().startTimer()) {
+      try (final OperationTimer.TimingContext ignored =
+               metrics.getCommitLatency().startTimer()) {
         innerTx.commit();
       } catch (final RocksDBException e) {
         throw new StorageException(e);

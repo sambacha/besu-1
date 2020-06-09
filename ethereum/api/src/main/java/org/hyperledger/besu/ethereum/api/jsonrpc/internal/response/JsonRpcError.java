@@ -33,7 +33,8 @@ public enum JsonRpcError {
   ETH_SEND_TX_NOT_AVAILABLE(
       -32604,
       "The method eth_sendTransaction is not supported. Use eth_sendRawTransaction to send a signed transaction to Besu."),
-
+  ETH_SEND_TX_ALREADY_KNOWN(-32000, "Known transaction"),
+  ETH_SEND_TX_REPLACEMENT_UNDERPRICED(-32000, "Replacement transaction underpriced"),
   // P2P related errors
   P2P_DISABLED(-32000, "P2P has been disabled. This functionality is not available"),
   P2P_NETWORK_NOT_RUNNING(-32000, "P2P network is not running"),
@@ -54,6 +55,8 @@ public enum JsonRpcError {
   TX_SENDER_NOT_AUTHORIZED(-32007, "Sender account not authorized to send transactions"),
   CHAIN_HEAD_WORLD_STATE_NOT_AVAILABLE(-32008, "Initial sync is still in progress"),
   GAS_PRICE_TOO_LOW(-32009, "Gas price below configured minimum gas price"),
+  WRONG_CHAIN_ID(-32000, "Wrong chainId"),
+  REPLAY_PROTECTED_SIGNATURES_NOT_SUPPORTED(-32000, "ChainId not supported"),
 
   // Miner failures
   COINBASE_NOT_SET(-32010, "Coinbase not set. Unable to start mining without a coinbase"),
@@ -65,7 +68,7 @@ public enum JsonRpcError {
   // Account errors
   NO_ACCOUNT_FOUND(-32000, "Account not found"),
 
-  // Worldstate erros
+  // Worldstate errors
   WORLD_STATE_UNAVAILABLE(-32000, "World state unavailable"),
 
   // Debug failures
@@ -120,8 +123,8 @@ public enum JsonRpcError {
   ONCHAIN_PRIVACY_GROUP_NOT_ENABLED(-50100, "Onchain privacy groups not enabled."),
   OFFCHAIN_PRIVACY_GROUP_NOT_ENABLED(
       -50100, "Offchain privacy group can't be used with Onchain privacy groups enabled."),
-  PRIVACY_GROUP_ID_NOT_AVAILABLE(
-      -50100, "Privacy group id is not available while OnChain privacy groups are enabled"),
+  ONCHAIN_PRIVACY_GROUP_ID_NOT_AVAILABLE(
+      -50100, "Private transactions to on-chain privacy groups must use privacyGroupId"),
   PRIVATE_FROM_DOES_NOT_MATCH_ENCLAVE_PUBLIC_KEY(
       -50100, "Private from does not match enclave public key"),
   PMT_FAILED_INTRINSIC_GAS_EXCEEDS_LIMIT(
